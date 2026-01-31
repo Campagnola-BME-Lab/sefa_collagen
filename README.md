@@ -8,6 +8,7 @@ The environment droplet (`.yml`) file has been provided.
 
 - **CUDA 11.1** is required for StyleGAN2-ADA functionality.
 - Developed and tested on **Ubuntu 24.04.2 LTS** with an **NVIDIA RTX 3080**.
+- Using NVIDIA driver **550** (required for Ubuntu 24.04 compatibility; CUDA 11.1 minimum is 455.23).
 - **GCC 8** and **GCC 10.5** were both verified to work.
 
 ## Interface
