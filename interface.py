@@ -1,5 +1,11 @@
 # python 3.7
-"""Sefa interaction with Streamlit version 0.84.0 with fine +/- buttons and traversal generation."""
+"""
+Streamlit interface for SeFa: model loading, sampling, synthesis, projection UI, and traversal export.
+
+Provides utilities to load and cache generators, sample and synthesize latent codes,
+project images, and generate semantic traversals as image sequences or GIFs. It wires these
+capabilities into a Streamlit UI for interactive exploration of GAN latent semantics.
+"""
 
 import numpy as np
 import torch
@@ -15,22 +21,23 @@ from projector import ImageProjector
 from PIL import Image
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
-
 import sys
 import os
-sys.path.append('/home/melchomps/Documents/GradSchool/stylegan2-encoder-pytorch')
-from model import Encoder
+from third_party.stylegan2_encoder.model import Encoder
 
 
 @st.cache(allow_output_mutation=True)
 def get_model(model_name):
+    # Load and cache a generator instance by name.
     return load_generator(model_name)
 
 @st.cache(allow_output_mutation=True)
 def factorize_model(model, layer_idx):
+    # Compute and cache factorization (eigenvectors/values) for a model and layer selection.
     return factorize_weight(model, layer_idx)
 
 def sample(model, gan_type, num=1):
+    # Sample random latent codes and apply model-specific preprocessing to obtain usable codes/ws.
     codes = torch.randn(num, model.z_space_dim).cuda()
     if gan_type == 'pggan':
         codes = model.layer0.pixel_norm(codes)
@@ -47,6 +54,7 @@ def sample(model, gan_type, num=1):
 
 def synthesize(model, gan_type, code, noise_mode='const'):
     with torch.no_grad():
+        # Synthesize images from code tensors, adjusting shapes to match the model's expected ws format.
         code_tensor = torch.as_tensor(code).to(dtype=torch.float32, device='cuda')
 
         if code_tensor.ndim == 2:
@@ -67,6 +75,7 @@ def synthesize(model, gan_type, code, noise_mode='const'):
 
 
 def create_gif(image_folder, output_path, duration=100):
+    # Create an animated GIF from PNG files in image_folder.
     import imageio
     images = []
     files = sorted(os.listdir(image_folder))
@@ -82,10 +91,12 @@ def generate_multi_sample_traversals(model, gan_type, boundaries, semantic_indic
     z_dim = model.z_space_dim if hasattr(model, 'z_space_dim') else model.z_dim
     num_ws = model.num_ws
     records = []
+    # Generate traversal images across samples, semantics, layer groups and steps, saving images and metadata.
 
     if layer_selections is None:
         layer_selections = [['all']]
 
+    # Iterate over each random sample (or use provided original_code when applicable).
     for sample_idx in range(n_samples):
         if original_code is not None and n_samples == 1:
             w = torch.tensor(np.copy(original_code)).cuda()
@@ -102,7 +113,9 @@ def generate_multi_sample_traversals(model, gan_type, boundaries, semantic_indic
             if w.shape[1] == 1:
                 w = w.repeat(1, num_ws, 1)
 
-        for sem_idx in semantic_indices:
+    # For each semantic index to traverse.
+    for sem_idx in semantic_indices:
+            # For each selected layer group (or 'all' to apply to every ws layer).
             for group in layer_selections:
                 if group == ['all']:
                     layer_idx = list(range(num_ws))
@@ -115,6 +128,7 @@ def generate_multi_sample_traversals(model, gan_type, boundaries, semantic_indic
                 os.makedirs(layer_dir, exist_ok=True)
                 boundary = boundaries[sem_idx][np.newaxis, np.newaxis, :]
 
+                # For each traversal step, edit the code by adding boundary * step and synthesize an image.
                 for step in np.arange(step_range[0], step_range[1] + step_size, step_size):
                     boundary_np = boundary.squeeze()
                     edited_code = w.cpu().numpy() + step * boundary_np
@@ -340,7 +354,7 @@ def main():
                 gif_path = os.path.join(output_folder, f'semantic_{sem_idx:03d}.gif')
                 create_gif(semantic_dir, gif_path, duration=100)
 
-        st.sidebar.success(f"Traversals saved to `{output_folder}` ✅")
+        st.sidebar.success(f"Traversals saved to `{output_folder}` folder.")
 
 if __name__ == '__main__':
     main()

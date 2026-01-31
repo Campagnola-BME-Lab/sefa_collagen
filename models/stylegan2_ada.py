@@ -1,4 +1,9 @@
-"""StyleGAN2-ADA Generator Wrapper for SeFa."""
+"""
+StyleGAN2-ADA wrapper that converts a legacy checkpoint into the SeFa-compatible interface.
+Loads the pretrained network and exposes mapping, synthesis, w_avg, dims, and device handling.
+Includes helpers to inspect or replace synthesis submodules for latent discovery/manipulation.
+ 
+"""
 
 import torch
 import torch.nn as nn
@@ -35,6 +40,7 @@ class Generator(nn.Module):
         self.w_avg = self.G.mapping.w_avg.clone().detach()
 
     def mapping(self, z, c=None):
+        # Map input z (and optional c) through the mapping network to produce ws.
         if c is None and self.c_dim > 0:
             c = torch.zeros([z.shape[0], self.c_dim], device=self.device)
         elif c is None:
@@ -43,15 +49,18 @@ class Generator(nn.Module):
         return ws
 
     def truncation(self, ws, trunc_psi=0.7, trunc_layers=8):
+        # Apply truncation to the first trunc_layers of ws towards the average w (w_avg).
         ws = ws.clone()
         ws[:, :trunc_layers] = self.w_avg + (ws[:, :trunc_layers] - self.w_avg) * trunc_psi
         return ws
 
     def synthesis(self, ws, noise_mode='random'):
+        # Synthesize images from ws using the synthesis network.
         images = self.G.synthesis(ws, noise_mode=noise_mode)
         return images
 
     def forward(self, z, c=None, trunc_psi=0.7, trunc_layers=8):
+        # Full forward: map z to ws, apply truncation, then synthesize images.
         ws = self.mapping(z, c)
         ws = self.truncation(ws, trunc_psi, trunc_layers)
         images = self.synthesis(ws)
@@ -59,18 +68,21 @@ class Generator(nn.Module):
 
     def get_layer_names(self):
         layer_names = []
+        # Return names of modules in the synthesis network that have a weight parameter.
         for name, module in self.G.synthesis.named_modules():
             if hasattr(module, 'weight'):
                 layer_names.append(name)
         return layer_names
 
     def get_layer(self, layer_name):
+        # Retrieve a named module from the synthesis network or raise if not found.
         module = dict(self.G.synthesis.named_modules()).get(layer_name, None)
         if module is None:
             raise ValueError(f'Layer {layer_name} not found.')
         return module
 
     def set_layer(self, layer_name, new_layer):
+        # Replace a named module in the synthesis network with new_layer.
         modules = dict(self.G.synthesis.named_modules())
         if layer_name in modules:
             parent_module = self.G.synthesis
@@ -89,5 +101,6 @@ class Discriminator(nn.Module):
         print("Initialized dummy Discriminator.")
 
     def forward(self, x):
+        # Dummy forward for compatibility; returns zero scores of correct batch size.
         print(f"Discriminator received input of shape: {x.shape}")
         return torch.zeros(x.size(0), 1, device=x.device)
