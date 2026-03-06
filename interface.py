@@ -23,6 +23,7 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 import sys
 import os
+import random
 from third_party.stylegan2_encoder.model import Encoder
 
 
@@ -151,6 +152,44 @@ def generate_multi_sample_traversals(model, gan_type, boundaries, semantic_indic
     df = pd.DataFrame(records)
     df.to_csv(os.path.join(output_dir, 'traversal_metadata.csv'), index=False)
 
+def encode_and_save_images(image_files, encoder, model, gan_type, output_dir, noise_mode, progress_bar):
+    """Encode a list of images and save paired real/encoded outputs to output_dir.
+
+    Accepts either Streamlit UploadedFile objects or plain filesystem path strings.
+    Outputs are named {idx:03d}_{stem}.png in both real/ and encoded/ subdirectories.
+    """
+    real_dir = os.path.join(output_dir, 'real')
+    encoded_dir = os.path.join(output_dir, 'encoded')
+    os.makedirs(real_dir, exist_ok=True)
+    os.makedirs(encoded_dir, exist_ok=True)
+
+    for idx, file_item in enumerate(image_files):
+        if isinstance(file_item, str):
+            stem = os.path.splitext(os.path.basename(file_item))[0]
+            image = Image.open(file_item).convert("L")
+        else:
+            stem = os.path.splitext(file_item.name)[0]
+            image = Image.open(file_item).convert("L")
+        pair_name = f"{idx+1:03d}_{stem}"
+
+        # Save real image
+        image.save(os.path.join(real_dir, f"{pair_name}.png"))
+
+        # Encode into latent space
+        image_tensor = torch.from_numpy(np.array(image)).float().unsqueeze(0).unsqueeze(0) / 127.5 - 1.0
+        image_tensor = F.interpolate(image_tensor, size=(model.img_resolution, model.img_resolution), mode='bilinear', align_corners=False)
+        image_tensor = image_tensor.cuda()
+        with torch.no_grad():
+            code = encoder(image_tensor)
+        if code.shape[1] == 1:
+            code = code.repeat(1, model.num_ws, 1)
+
+        # Synthesize and save encoded image
+        encoded_img = synthesize(model, gan_type, code.detach().cpu().numpy(), noise_mode=noise_mode)
+        Image.fromarray(np.squeeze(encoded_img)).save(os.path.join(encoded_dir, f"{pair_name}.png"))
+
+        progress_bar.progress((idx + 1) / len(image_files))
+
 def main():
     st.title('Closed-Form Factorization of Latent Semantics in GANs')
     st.sidebar.title('Options')
@@ -169,7 +208,7 @@ def main():
     noise_mode = 'const' if noise_const else 'random'
 
     use_encoder = st.sidebar.checkbox("Use Encoder for Projection", value=False)
-    encoder_checkpoint = st.sidebar.text_input("Path to Encoder Checkpoint", value='/home/melchomps/Documents/GradSchool/sefa/checkpoints/StyleGan2_Encoder/best_encoder.pth')
+    encoder_checkpoint = st.sidebar.text_input("Path to Encoder Checkpoint", value='checkpoints/StyleGan2_Encoder/best_encoder.pth')
 
 
     uploaded_file = st.sidebar.file_uploader("Upload an image to project", type=["png", "jpg", "jpeg"])
@@ -355,6 +394,54 @@ def main():
                 create_gif(semantic_dir, gif_path, duration=100)
 
         st.sidebar.success(f"Traversals saved to `{output_folder}` folder.")
+
+    # ── Mass Encode ────────────────────────────────────────────────────────────
+    st.sidebar.markdown("---")
+    st.sidebar.title("Mass Encode Images")
+
+    if not use_encoder or encoder is None:
+        st.sidebar.warning("Enable 'Use Encoder for Projection' above to use mass encoding.")
+    else:
+        mass_files = st.sidebar.file_uploader(
+            "Select PNG images to encode",
+            type=["png"],
+            accept_multiple_files=True,
+            key="mass_uploader"
+        )
+        if mass_files:
+            st.sidebar.info(f"{len(mass_files)} image(s) selected")
+
+        if mass_files and st.sidebar.button("Mass Encode", key="mass_encode_btn"):
+            st.write(f"### Mass Encoding {len(mass_files)} image(s)...")
+            progress_bar = st.progress(0)
+            encode_and_save_images(mass_files, encoder, model, gan_type, mass_output_dir, noise_mode, progress_bar)
+            st.success(f"Done! Saved {len(mass_files)} pairs to `{mass_output_dir}/real/` and `{mass_output_dir}/encoded/`")
+
+        st.sidebar.markdown("**— or —**")
+        st.sidebar.markdown("**Random selection from folder**")
+        rand_folder = st.sidebar.text_input("Folder path", value="", key="rand_folder")
+        rand_count = int(st.sidebar.number_input("Number of images to select", value=10, min_value=1, step=1, key="rand_count"))
+        mass_output_dir = st.sidebar.text_input("Output folder", value="multi-encoded", key="mass_output_dir")
+
+        if rand_folder and st.sidebar.button("Random Select & Encode", key="rand_encode_btn"):
+            if not os.path.isdir(rand_folder):
+                st.sidebar.error("Folder not found.")
+            else:
+                all_pngs = sorted([
+                    os.path.join(rand_folder, f) for f in os.listdir(rand_folder)
+                    if f.lower().endswith('.png')
+                ])
+                if len(all_pngs) == 0:
+                    st.sidebar.error("No PNG files found in that folder.")
+                elif rand_count > len(all_pngs):
+                    st.sidebar.error(f"Only {len(all_pngs)} PNG(s) available, but {rand_count} requested.")
+                else:
+                    selected_paths = random.sample(all_pngs, rand_count)
+                    st.write(f"### Mass Encoding {rand_count} randomly selected image(s)...")
+                    st.write("Selected: " + ", ".join(os.path.basename(p) for p in selected_paths))
+                    progress_bar = st.progress(0)
+                    encode_and_save_images(selected_paths, encoder, model, gan_type, mass_output_dir, noise_mode, progress_bar)
+                    st.success(f"Done! Saved {rand_count} pairs to `{mass_output_dir}/real/` and `{mass_output_dir}/encoded/`")
 
 if __name__ == '__main__':
     main()
