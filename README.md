@@ -11,6 +11,8 @@ The environment droplet (`.yml`) file has been provided.
 - Using NVIDIA driver **550** (required for Ubuntu 24.04 compatibility; CUDA 11.1 minimum is 455.23).
 - **GCC 8** and **GCC 10.5** were both verified to work.
 
+This repo already contains both models under **checkpoints/** which are loaded automatically in the interface via relative links.
+
 ## Interface
 
 The interface has been expanded with a variety of analysis tool, and is based on [StreamLit](https://www.streamlit.io/). This interface can be locally launched with

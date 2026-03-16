@@ -1,1 +1,4 @@
+# Need to handle large files separately
 checkpoints/
+# Local pycache
+__pycache__/
